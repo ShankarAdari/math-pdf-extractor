@@ -61,18 +61,32 @@ def call_gemini_with_fallback(client, contents, config=None, vision_only=False):
                 resp = client.models.generate_content(model=model, contents=contents, config=config)
             else:
                 resp = client.models.generate_content(model=model, contents=contents)
+            # Check for empty / blocked response — treat as retriable
+            raw_text = None
+            try:
+                raw_text = resp.text
+            except Exception:
+                pass
+            if raw_text is None or raw_text.strip() == "":
+                logger.warning(f"Model {model} returned empty/blocked response, trying next model.")
+                last_err = Exception(f"Model {model} returned empty response (possible safety block or model error).")
+                continue
             logger.info(f"Gemini model {model} succeeded.")
             return model, resp
         except Exception as e:
             emsg = str(e)
-            # Only retry on quota/rate-limit errors — not on 404 not-found
-            if any(k in emsg.lower() for k in ["quota", "resource_exhausted", "429", "503"]):
-                logger.warning(f"Model {model} quota/rate error, trying next: {emsg[:120]}")
+            # Retry on quota/rate-limit OR empty output errors
+            retriable_keywords = [
+                "quota", "resource_exhausted", "429", "503",
+                "model output", "output text", "tool calls", "empty", "blocked"
+            ]
+            if any(k in emsg.lower() for k in retriable_keywords):
+                logger.warning(f"Model {model} retriable error, trying next: {emsg[:150]}")
                 last_err = e
                 continue
             # 404 not found, auth errors, bad request → stop trying immediately
             raise
-    raise Exception(f"All Gemini models quota-limited. Last error: {last_err}")
+    raise Exception(f"All Gemini models failed. Last error: {last_err}")
 
 
 # ─── Gemini Quota-Limiting Cache ──────────────────────────────────────────────
@@ -782,7 +796,14 @@ def gemini_solve(question_text: str, img_path: Optional[str], api_key: str) -> d
         ),
         vision_only=is_vision
     )
-    raw = resp.text.strip()
+    # Safely extract text — resp.text can raise if the response is blocked
+    try:
+        raw = resp.text
+    except Exception as e:
+        raise Exception(f"Gemini response was blocked or empty: {e}")
+    if not raw or not raw.strip():
+        raise Exception("Gemini returned an empty response (possible safety block or model output error).")
+    raw = raw.strip()
     # Strip markdown fences if present
     if raw.startswith("```"):
         raw = "\n".join(raw.splitlines()[1:-1]).strip()
