@@ -102,7 +102,7 @@ export default function App() {
   const [aiProvider, setAiProvider] = useState<'auto' | 'gemini' | 'groq' | 'ollama' | 'offline'>(() =>
     (localStorage.getItem('ai_provider') as any) || 'auto'
   );
-  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('groq_api_key') || '');
+  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('groq_api_key') || import.meta.env.VITE_GROQ_API_KEY || '');
   const [ollamaModel, setOllamaModel] = useState(() => localStorage.getItem('ollama_model') || 'llama3');
   const [ollamaUrl, setOllamaUrl] = useState(() => localStorage.getItem('ollama_url') || 'http://localhost:11434');
   const [showProviderSettings, setShowProviderSettings] = useState(false);
