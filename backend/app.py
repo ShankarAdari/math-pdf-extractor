@@ -138,6 +138,27 @@ try:
 except ImportError:
     pytesseract = None  # type: ignore
 
+# ─── EasyOCR Lazy Init ────────────────────────────────────────────────────────
+_easyocr_reader = None
+_easyocr_available = None   # None = untested, True/False after first attempt
+
+def _get_easyocr():
+    global _easyocr_reader, _easyocr_available
+    if _easyocr_available is False:
+        return None
+    if _easyocr_reader is not None:
+        return _easyocr_reader
+    try:
+        import easyocr
+        _easyocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+        _easyocr_available = True
+        logger.info("EasyOCR reader initialized successfully.")
+        return _easyocr_reader
+    except Exception as e:
+        _easyocr_available = False
+        logger.warning(f"EasyOCR unavailable: {e}")
+        return None
+
 
 # ─── Pydantic Schemas ─────────────────────────────────────────────────────────
 class QuestionDetection(BaseModel):
@@ -571,6 +592,23 @@ def tesseract_ocr(pil_img: Image.Image) -> str:
         return pytesseract.image_to_string(pil_img, config="--psm 6 --oem 3").strip()
     except Exception as e:
         logger.warning(f"Tesseract OCR failed: {e}")
+        return ""
+
+
+def easyocr_ocr(pil_img: Image.Image) -> str:
+    """Extract text using EasyOCR (no external binary required)."""
+    reader = _get_easyocr()
+    if reader is None:
+        return ""
+    try:
+        import numpy as np
+        img_array = np.array(pil_img.convert("RGB"))
+        results = reader.readtext(img_array, detail=0, paragraph=True)
+        text = "\n".join(r.strip() for r in results if r.strip())
+        logger.info(f"EasyOCR extracted {len(text)} chars.")
+        return text
+    except Exception as e:
+        logger.warning(f"EasyOCR failed: {e}")
         return ""
 
 
@@ -1159,31 +1197,48 @@ async def ocr_image(
             except Exception as ge:
                 logger.error(f"Gemini OCR error: {ge}")
                 # Fall through to Tesseract
+        # ── EasyOCR (primary offline OCR — no external binary needed) ────────
+        if not text:
+            try:
+                pil = Image.open(img_path)
+                pil_g = pil.convert("L")
+                pil_e = ImageEnhance.Contrast(pil_g).enhance(2.0)
+                text = easyocr_ocr(pil_e)
+                if text:
+                    mode = "easyocr"
+                pil.close()
+            except Exception as ee:
+                logger.error(f"EasyOCR failed: {ee}")
+        # ── Tesseract (fallback if installed) ────────────────────────────────
         if not text and TESSERACT_CMD and pytesseract:
             try:
                 pil = Image.open(img_path)
                 pil_g = pil.convert("L")
                 pil_e = ImageEnhance.Contrast(pil_g).enhance(2.0)
                 text = tesseract_ocr(pil_e)
-                mode = "tesseract_ocr"
+                if text:
+                    mode = "tesseract_ocr"
                 pil.close()
             except Exception as te:
                 logger.error(f"Tesseract failed: {te}")
+        # ── PyMuPDF text layer (last resort for PDF-based images) ────────────
         if not text:
             try:
                 doc = fitz.open(img_path)
                 text = doc[0].get_text("text").strip()
                 doc.close()
+                if text:
+                    mode = "pymupdf_text"
             except Exception:
                 pass
         if not text:
-            tess_status = "available" if TESSERACT_CMD else "not installed"
+            eocr_status = "available" if _easyocr_available else "not available"
             if has_key:
                 text = (
                     "No text could be extracted from this image.\n\n"
-                    "The Gemini API was tried but all models returned empty results — "
+                    "The Gemini Vision API was tried but returned no results — "
                     "the image may be very small, blurry, or contain only diagrams.\n\n"
-                    f"Tesseract OCR is {tess_status}.\n\n"
+                    f"EasyOCR is {eocr_status} for offline extraction.\n\n"
                     "Try: uploading a clearer screenshot, or type the question manually."
                 )
             else:
@@ -1192,7 +1247,7 @@ async def ocr_image(
                     "To extract math from screenshots:\n"
                     "- Add a Gemini API Key in the settings bar above for AI Vision OCR that reads "
                     "Greek letters (θ, β, α), fractions, sec, cosec, and all math symbols.\n"
-                    f"- Tesseract OCR is {tess_status} for basic printed text."
+                    f"- EasyOCR offline extraction is {eocr_status} for basic printed text."
                 )
         return {
             "filename": image.filename,

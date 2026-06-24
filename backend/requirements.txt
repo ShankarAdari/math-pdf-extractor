@@ -7,4 +7,5 @@ python-dotenv>=1.0.0
 python-multipart>=0.0.9
 pdfplumber>=0.11.0
 pytesseract>=0.3.13
+easyocr>=1.7.0
 requests>=2.31.0

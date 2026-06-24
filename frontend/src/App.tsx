@@ -128,6 +128,9 @@ export default function App() {
     if (mode === 'ollama_ai') return `🦙 Ollama AI${modelInfo ? ` (${modelInfo})` : ''}`;
     if (mode === 'free_local_sympy') return '🔓 SymPy Offline';
     if (mode === 'free_local_tutor') return '📝 Local Tutor';
+    if (mode === 'easyocr') return '👁️ EasyOCR';
+    if (mode === 'tesseract_ocr') return '📄 Tesseract OCR';
+    if (mode === 'pymupdf_text') return '📑 PDF Text Layer';
     return '🔓 Offline Solver';
   };
 
