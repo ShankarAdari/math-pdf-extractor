@@ -1184,6 +1184,54 @@ a:hover { color: var(--gold); }
   margin: 0.75rem 0;
 }
 
+/* Formula items from formulas_used section */
+.math-formula-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0.4rem 0;
+  padding: 0.3rem 0.6rem;
+  background: rgba(129,161,193,0.07);
+  border-left: 2px solid rgba(129,161,193,0.35);
+  border-radius: 0 4px 4px 0;
+  flex-wrap: wrap;
+}
+
+.math-formula-name {
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--teal);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 6rem;
+}
+
+.math-formula-name::after {
+  content: ':';
+}
+
+.math-formula-expr {
+  flex: 1;
+  overflow-x: auto;
+}
+
+.math-formula-label {
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--teal);
+  margin: 0.5rem 0 0.1rem 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.math-subheading {
+  font-size: 0.9rem;
+  margin: 0.6rem 0 0.2rem 0;
+}
+
+
 
 /* ───────────────────────────────────────────
    DIRECT SOLVER & HISTORY ADDITIONS

@@ -19,12 +19,8 @@ const loadKaTeX = (): Promise<any> => {
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js';
     script.crossOrigin = 'anonymous';
-    script.onload = () => {
-      resolve((window as any).katex);
-    };
-    script.onerror = (err) => {
-      reject(err);
-    };
+    script.onload = () => { resolve((window as any).katex); };
+    script.onerror = (err) => { reject(err); };
     document.head.appendChild(script);
   });
 };
@@ -34,84 +30,99 @@ interface MathRendererProps {
 }
 
 /**
- * Render inline math within a text node.
- * Splits text by $...$ patterns and renders KaTeX for math parts,
- * while also handling **bold** and *italic* markdown.
+ * Normalize text coming from the backend:
+ * - Unescape double backslashes that JSON encoding produces (\\theta → \theta)
+ * - Normalize line endings
+ */
+function normalizeLatex(s: string): string {
+  // Replace double backslashes with single (JSON double-escaping artifact)
+  // But only when they precede known LaTeX commands or are true escape sequences
+  return s
+    .replace(/\\\\([a-zA-Z{}\[\]()^_|.,!;:'"&% ])/g, '\\$1')
+    .replace(/\\n/g, '\n')   // literal \n strings → newline
+    .replace(/\\t(?=[^a-z])/g, '\t'); // only \t not followed by letter (preserve \theta etc.)
+}
+
+/**
+ * Render a KaTeX formula safely. Returns an HTML element.
+ */
+function renderKatex(formula: string, katex: any, displayMode: boolean): HTMLElement {
+  const el = document.createElement(displayMode ? 'div' : 'span');
+  el.className = displayMode ? 'math-block-container' : 'math-inline-container';
+  try {
+    katex.render(formula, el, {
+      displayMode,
+      throwOnError: false,
+      trust: false,
+      strict: false,
+    });
+  } catch {
+    el.textContent = displayMode ? `$$${formula}$$` : `$${formula}$`;
+  }
+  return el;
+}
+
+/**
+ * Render inline content: handles $...$ math, **bold**, *italic*, plain text.
  */
 function renderInlineContent(text: string, katex: any, container: HTMLElement) {
-  // Split by $...$ (inline math) — careful not to match $$
+  // Split by inline math $...$ (not $$)
   const parts = text.split(/(?<!\$)(\$(?!\$)[^\$]*?\$)(?!\$)/g);
 
   parts.forEach((part) => {
     if (!part) return;
 
     if (part.startsWith('$') && part.endsWith('$') && !part.startsWith('$$')) {
-      // Inline math
       const formula = part.slice(1, -1).trim();
       if (formula) {
-        const el = document.createElement('span');
-        el.className = 'math-inline-container';
-        try {
-          katex.render(formula, el, { displayMode: false, throwOnError: false });
-        } catch {
-          el.innerText = part;
-        }
-        container.appendChild(el);
+        container.appendChild(renderKatex(formula, katex, false));
       }
-    } else {
-      // Process markdown bold (**...**) and italic (*...*)
-      const boldParts = part.split(/(\*\*[^*]+?\*\*)/g);
-      boldParts.forEach((bp) => {
-        if (!bp) return;
-        if (bp.startsWith('**') && bp.endsWith('**')) {
-          const strong = document.createElement('strong');
-          strong.textContent = bp.slice(2, -2);
-          container.appendChild(strong);
-        } else {
-          // Check for italic
-          const italicParts = bp.split(/(\*[^*]+?\*)/g);
-          italicParts.forEach((ip) => {
-            if (!ip) return;
-            if (ip.startsWith('*') && ip.endsWith('*') && !ip.startsWith('**')) {
-              const em = document.createElement('em');
-              em.textContent = ip.slice(1, -1);
-              container.appendChild(em);
-            } else {
-              container.appendChild(document.createTextNode(ip));
-            }
-          });
-        }
-      });
+      return;
     }
+
+    // Bold and italic
+    const boldParts = part.split(/(\*\*[^*]+?\*\*)/g);
+    boldParts.forEach((bp) => {
+      if (!bp) return;
+      if (bp.startsWith('**') && bp.endsWith('**')) {
+        const strong = document.createElement('strong');
+        strong.textContent = bp.slice(2, -2);
+        container.appendChild(strong);
+      } else {
+        const italicParts = bp.split(/(\*[^*]+?\*)/g);
+        italicParts.forEach((ip) => {
+          if (!ip) return;
+          if (ip.startsWith('*') && ip.endsWith('*') && !ip.startsWith('**')) {
+            const em = document.createElement('em');
+            em.textContent = ip.slice(1, -1);
+            container.appendChild(em);
+          } else {
+            container.appendChild(document.createTextNode(ip));
+          }
+        });
+      }
+    });
   });
 }
 
 /**
- * Process a single line of text that may contain markdown-like formatting.
- * Returns an HTML element representing this line.
+ * Process a single line into an HTML element.
  */
-function processLine(line: string, katex: any): HTMLElement {
+function processLine(line: string, katex: any): HTMLElement | null {
   const trimmed = line.trim();
 
   // Empty line → spacer
   if (!trimmed) {
     const spacer = document.createElement('div');
     spacer.className = 'math-line-spacer';
-    spacer.style.height = '0.5rem';
+    spacer.style.height = '0.4rem';
     return spacer;
   }
 
-  // Display math $$...$$
+  // Display math $$...$$ on a single line
   if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
     const formula = trimmed.slice(2, -2).trim();
-    const el = document.createElement('div');
-    el.className = 'math-block-container';
-    try {
-      katex.render(formula, el, { displayMode: true, throwOnError: false });
-    } catch {
-      el.innerText = trimmed;
-    }
-    return el;
+    return renderKatex(formula, katex, true);
   }
 
   // Blockquote (> ...)
@@ -122,14 +133,20 @@ function processLine(line: string, katex: any): HTMLElement {
     return el;
   }
 
-  // Horizontal rule (--- or ___ or ***)
+  // Horizontal rule
   if (/^[-_*]{3,}$/.test(trimmed)) {
     const hr = document.createElement('hr');
     hr.className = 'math-hr';
     return hr;
   }
 
-  // Heading with emoji prefix or markdown # (e.g., "📖 **Concept:...**" or "## Title")
+  // Headings (# or ##)
+  if (trimmed.startsWith('## ')) {
+    const el = document.createElement('h4');
+    el.className = 'math-heading math-subheading';
+    renderInlineContent(trimmed.slice(3), katex, el);
+    return el;
+  }
   if (trimmed.startsWith('# ')) {
     const el = document.createElement('h3');
     el.className = 'math-heading';
@@ -137,24 +154,70 @@ function processLine(line: string, katex: any): HTMLElement {
     return el;
   }
 
-  // Numbered list item (e.g., "1. ", "2. ")
-  if (/^\d+\.\s/.test(trimmed)) {
+  // Step header: "Step N: Title" or "**Step N: Title**"
+  const stepMatch = trimmed.match(/^\*?\*?Step\s+(\d+)\s*:\s*(.*?)\*?\*?$/i);
+  if (stepMatch) {
     const el = document.createElement('div');
-    el.className = 'math-list-item math-numbered-item';
-    const numberMatch = trimmed.match(/^(\d+)\.\s/);
-    const number = numberMatch ? numberMatch[1] : '1';
-    const numSpan = document.createElement('span');
-    numSpan.className = 'math-list-number';
-    numSpan.textContent = `${number}.`;
-    el.appendChild(numSpan);
-    const contentSpan = document.createElement('span');
-    contentSpan.className = 'math-list-content';
-    renderInlineContent(trimmed.replace(/^\d+\.\s/, ''), katex, contentSpan);
-    el.appendChild(contentSpan);
+    el.className = 'math-step-header';
+    const badge = document.createElement('span');
+    badge.className = 'math-step-badge';
+    badge.textContent = `Step ${stepMatch[1]}`;
+    el.appendChild(badge);
+    if (stepMatch[2]?.trim()) {
+      const title = document.createElement('span');
+      title.className = 'math-step-title';
+      renderInlineContent(stepMatch[2].replace(/\*+/g, ''), katex, title);
+      el.appendChild(title);
+    }
     return el;
   }
 
-  // Bullet list item (- ... or • ...)
+  // Formula name line: "Formula Name: $$...$$" or "Name: $$...$$"
+  // These lines come from formulas_used sections like "Pythagorean Identity: $$\sin^2\theta...$$"
+  const formulaNameMatch = trimmed.match(/^([^:$]+):\s*(\$\$?.*\$\$?)$/);
+  if (formulaNameMatch) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'math-formula-item';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'math-formula-name';
+    nameSpan.textContent = formulaNameMatch[1].trim().replace(/^\d+\.\s*/, '');
+    wrapper.appendChild(nameSpan);
+    const mathSpan = document.createElement('span');
+    mathSpan.className = 'math-formula-expr';
+    renderInlineContent(formulaNameMatch[2].trim(), katex, mathSpan);
+    wrapper.appendChild(mathSpan);
+    return wrapper;
+  }
+
+  // Numbered list item: "1. content"
+  // Only treat as numbered list if the content is meaningful (not just "Name:")
+  if (/^\d+\.\s/.test(trimmed)) {
+    const numberMatch = trimmed.match(/^(\d+)\.\s+([\s\S]*)$/);
+    if (numberMatch) {
+      const content = numberMatch[2];
+      // If the content is only "Name:" style with no formula, render as formula label
+      if (/^[A-Za-z\s]+:$/.test(content.trim())) {
+        // It's a "Name:" label — skip rendering as list item, show as label
+        const el = document.createElement('div');
+        el.className = 'math-formula-label';
+        el.textContent = content.trim();
+        return el;
+      }
+      const el = document.createElement('div');
+      el.className = 'math-list-item math-numbered-item';
+      const numSpan = document.createElement('span');
+      numSpan.className = 'math-list-number';
+      numSpan.textContent = `${numberMatch[1]}.`;
+      el.appendChild(numSpan);
+      const contentSpan = document.createElement('span');
+      contentSpan.className = 'math-list-content';
+      renderInlineContent(content, katex, contentSpan);
+      el.appendChild(contentSpan);
+      return el;
+    }
+  }
+
+  // Bullet list item
   if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
     const el = document.createElement('div');
     el.className = 'math-list-item math-bullet-item';
@@ -166,24 +229,6 @@ function processLine(line: string, katex: any): HTMLElement {
     contentSpan.className = 'math-list-content';
     renderInlineContent(trimmed.slice(2), katex, contentSpan);
     el.appendChild(contentSpan);
-    return el;
-  }
-
-  // Step header detection (e.g., "Step 1: Title" or "**Step 1: Title**")
-  const stepMatch = trimmed.match(/^\*?\*?Step\s+(\d+)\s*:\s*(.*?)\*?\*?$/i);
-  if (stepMatch) {
-    const el = document.createElement('div');
-    el.className = 'math-step-header';
-    const badge = document.createElement('span');
-    badge.className = 'math-step-badge';
-    badge.textContent = `Step ${stepMatch[1]}`;
-    el.appendChild(badge);
-    if (stepMatch[2]) {
-      const title = document.createElement('span');
-      title.className = 'math-step-title';
-      renderInlineContent(stepMatch[2].replace(/\*+/g, ''), katex, title);
-      el.appendChild(title);
-    }
     return el;
   }
 
@@ -199,21 +244,22 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text }) => {
   const [loadError, setLoadError] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Normalize text
+  // Normalize input to string
   let stringText = '';
   if (typeof text === 'string') {
     stringText = text;
   } else if (Array.isArray(text)) {
     stringText = text.map((step, idx) => {
       const stepStr = typeof step === 'string' ? step : JSON.stringify(step);
-      if (/^\s*(?:\d+\.|[*\-])\s+/.test(stepStr)) {
-        return stepStr;
-      }
+      if (/^\s*(?:\d+\.|[*\-])\s+/.test(stepStr)) return stepStr;
       return `${idx + 1}. ${stepStr}`;
     }).join('\n\n');
   } else if (text !== undefined && text !== null) {
     stringText = String(text);
   }
+
+  // Fix double-backslash escaping from JSON transport
+  stringText = normalizeLatex(stringText);
 
   useEffect(() => {
     loadKaTeX()
@@ -226,15 +272,12 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text }) => {
 
   useEffect(() => {
     if (!katexLoaded || !containerRef.current) return;
-
     const katex = (window as any).katex;
     if (!katex) return;
 
-    // Clear previous contents
     containerRef.current.innerHTML = '';
 
-    // First, handle multi-line display math ($$...$$) that span multiple lines
-    // Split into blocks separated by $$...$$
+    // Split text into display-math blocks ($$...$$) and text blocks
     const blocks: { type: 'text' | 'displaymath'; content: string }[] = [];
     const displayMathRegex = /\$\$([\s\S]*?)\$\$/g;
     let lastIndex = 0;
@@ -251,23 +294,13 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text }) => {
       blocks.push({ type: 'text', content: stringText.slice(lastIndex) });
     }
 
-    // Process each block
     blocks.forEach((block) => {
       if (block.type === 'displaymath') {
-        const el = document.createElement('div');
-        el.className = 'math-block-container';
-        try {
-          katex.render(block.content, el, { displayMode: true, throwOnError: false });
-        } catch {
-          el.innerText = `$$${block.content}$$`;
-        }
-        containerRef.current?.appendChild(el);
+        containerRef.current?.appendChild(renderKatex(block.content, katex, true));
       } else {
-        // Split text block into lines and process each
-        const lines = block.content.split('\n');
-        lines.forEach((line) => {
+        block.content.split('\n').forEach((line) => {
           const el = processLine(line, katex);
-          containerRef.current?.appendChild(el);
+          if (el) containerRef.current?.appendChild(el);
         });
       }
     });
@@ -281,10 +314,5 @@ export const MathRenderer: React.FC<MathRendererProps> = ({ text }) => {
     return <div className="math-loading">{stringText}</div>;
   }
 
-  return (
-    <div
-      ref={containerRef}
-      className="math-rendered-text"
-    />
-  );
+  return <div ref={containerRef} className="math-rendered-text" />;
 };

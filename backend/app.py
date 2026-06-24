@@ -874,10 +874,15 @@ GROQ_SOLVER_PROMPT = (
     "FORMAT: Use LaTeX for ALL math: $...$ inline, $$...$$ display. Greek in LaTeX. Fractions as $\\frac{a}{b}$.\n\n"
     "STRUCTURE YOUR OUTPUT:\n"
     "1. 'theory_explanation': 2-4 sentence mini-lesson on the mathematical concept behind this problem.\n"
-    "2. 'formulas_used': List ALL formulas/identities/theorems used, each on new line as: 'Name: $$formula$$'\n"
+    "2. 'formulas_used': List ALL formulas used. EACH formula MUST be on its own line in EXACTLY this format:\n"
+    "   Formula Name: $$LaTeX formula here$$\n"
+    "   Example:\n"
+    "   Pythagorean Identity: $$\\sin^2\\theta + \\cos^2\\theta = 1$$\n"
+    "   Reciprocal Identity: $$\\sec\\theta = \\frac{1}{\\cos\\theta}$$\n"
+    "   Do NOT use numbered lists. Do NOT put 'Name:' on a separate line. One formula per line.\n"
     "3. 'solution_steps': Detailed NUMBERED step-by-step solution. Each step: title, explanation, LaTeX computation.\n"
     "   Format: 'Step 1: [Title]\n[Explanation and math]\n\nStep 2: ...'\n"
-    "4. 'final_answer': Concise definitive answer with LaTeX.\n"
+    "4. 'final_answer': Concise definitive answer with LaTeX. Use $$...$$ for display math.\n"
     "5. 'difficulty_level': 'Easy' | 'Medium' | 'Hard' | 'Advanced'.\n\n"
     "Return ONLY a JSON object (no markdown, no fences) with fields:\n"
     "  problem_type, difficulty_level, formulas_used, theory_explanation, reasoning, solution_steps, final_answer\n"
@@ -1003,6 +1008,7 @@ PROCESSED_CACHE: dict = {}
 # ─── Startup ──────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def warmup():
+    # SymPy warmup
     try:
         import sympy
         from sympy.parsing.sympy_parser import (
@@ -1015,6 +1021,20 @@ async def warmup():
         logger.info("SymPy warmup complete.")
     except Exception as e:
         logger.warning(f"SymPy warmup: {e}")
+
+    # EasyOCR warmup — load models in background thread so server starts fast
+    import threading
+    def _warmup_easyocr():
+        try:
+            reader = _get_easyocr()
+            if reader:
+                logger.info("EasyOCR warmup complete.")
+            else:
+                logger.warning("EasyOCR warmup failed — OCR will fall back to Gemini Vision.")
+        except Exception as e:
+            logger.warning(f"EasyOCR warmup error: {e}")
+    threading.Thread(target=_warmup_easyocr, daemon=True).start()
+
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
