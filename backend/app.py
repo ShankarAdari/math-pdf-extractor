@@ -121,6 +121,7 @@ _TESSERACT_PATHS = [
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
     r"C:\Users\HP\AppData\Local\Programs\Tesseract-OCR\tesseract.exe",
+    r"C:\Users\HP\scoop\apps\tesseract\current\tesseract.exe",
 ]
 TESSERACT_CMD = None
 for _tp in _TESSERACT_PATHS:
