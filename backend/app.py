@@ -1423,7 +1423,7 @@ def groq_solve(question_text: str, groq_api_key: str, model: str = "llama-3.3-70
                         if use_json_mode:
                             logger.warning(f"Groq {current_model} JSON mode failed, retrying text mode")
                             last_err = Exception(f"Groq {current_model}: HTTP {resp.status_code} (json mode)")
-                            break  # break inner loop, will retry with use_json_mode=False
+                            continue  # continue inner loop, will retry with use_json_mode=False
                         else:
                             logger.warning(f"Groq model {current_model} unavailable: {err_body[:120]}")
                             last_err = Exception(f"Groq model {current_model}: HTTP {resp.status_code}")
