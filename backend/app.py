@@ -458,9 +458,17 @@ def try_sympy_solve(question_text: str):
 
         # ── CALCULUS: Limits ──────────────────────────────────────────────────
         elif is_limit:
-            lim_match = re.search(r"lim[^a-z]*x\s*[→->]+\s*([\-\d\.oO]+)", q, re.IGNORECASE)
-            point = oo if "inf" in ql or "infinity" in ql else (P(lim_match.group(1)) if lim_match else S.Zero)
-            raw_expr = re.sub(r"lim.*?x\s*[→->]+\s*[\-\d\.oO]+", " ", q, flags=re.I)
+            lim_match = re.search(r"\bx\s*(?:\\to|→|\-+>|to|approaches|tends\s+to)\s*([\-\d\.oO]+|\\infty|infinity|inf)", q, re.IGNORECASE)
+            pt_str = lim_match.group(1).lower() if lim_match else ""
+            if any(k in pt_str for k in ["inf", "oo", "infty"]):
+                point = oo
+            else:
+                point = P(pt_str) if lim_match else S.Zero
+            
+            raw_expr = q
+            if lim_match:
+                raw_expr = q[:lim_match.start()] + " " + q[lim_match.end():]
+            raw_expr = re.sub(r"\b(?:lim|limit|as|approaches|tends\s+to)\b", " ", raw_expr, flags=re.I)
             raw_expr = _extract_math_expr(raw_expr)
             if raw_expr:
                 expr = P(raw_expr)
@@ -638,7 +646,12 @@ def try_sympy_solve(question_text: str):
 
         # ── SEQUENCES & SERIES ────────────────────────────────────────────────
         elif is_series:
-            nums_raw = re.findall(r"[\-]?\d+(?:\.\d+)?", q)
+            n_terms_match = re.search(r"(\d+)\s*(?:th|st|nd|rd)\s*term", ql)
+            n_target = int(n_terms_match.group(1)) if n_terms_match else 10
+            clean_q = q
+            if n_terms_match:
+                clean_q = q[:n_terms_match.start()] + q[n_terms_match.end():]
+            nums_raw = re.findall(r"[\-]?\d+(?:\.\d+)?", clean_q)
             if len(nums_raw) >= 3:
                 data = [float(v) for v in nums_raw]
                 diffs = [data[i+1] - data[i] for i in range(len(data)-1)]
@@ -648,8 +661,6 @@ def try_sympy_solve(question_text: str):
                 if is_ap:
                     d_val = diffs[0]
                     a_val = data[0]
-                    n_terms_match = re.search(r"(\d+)\s*(?:th|st|nd|rd)\s*term", ql)
-                    n_target = int(n_terms_match.group(1)) if n_terms_match else 10
                     nth = a_val + (n_target - 1) * d_val
                     s_n = n_target * (2 * a_val + (n_target - 1) * d_val) / 2
                     steps = (
@@ -668,8 +679,6 @@ def try_sympy_solve(question_text: str):
                 elif is_gp:
                     r_val = ratios[0]
                     a_val = data[0]
-                    n_terms_match = re.search(r"(\d+)\s*(?:th|st|nd|rd)\s*term", ql)
-                    n_target = int(n_terms_match.group(1)) if n_terms_match else 10
                     nth = a_val * (r_val ** (n_target - 1))
                     if abs(r_val) < 1:
                         s_inf = a_val / (1 - r_val)
