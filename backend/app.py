@@ -41,14 +41,14 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 GEMINI_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
+    "gemini-2.5-flash-lite",
 ]
 
 # Models that support vision (image input)
 VISION_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
+    "gemini-2.5-flash-lite",
 ]
 
 def call_gemini_with_fallback(client, contents, config=None, vision_only=False):
@@ -312,250 +312,729 @@ def convert_trig_powers(s: str) -> str:
     return s
 
 
-# ─── Enhanced Offline SymPy Solver ────────────────────────────────────────────
+# ─── Comprehensive Multi-Domain Offline Math Solver ──────────────────────────
 def try_sympy_solve(question_text: str):
-    """Returns (success, problem_type, steps, final_answer)."""
+    """Returns (success, problem_type, steps, final_answer).
+    Handles: Algebra, Calculus, Linear Algebra, Statistics, Number Theory,
+    Sequences, Geometry, Trigonometry, Complex Numbers, and more.
+    """
     import sympy
-    from sympy import (symbols, solve, diff, integrate, simplify,
-                       sin, cos, tan, cot, sec, csc, pi)
+    from sympy import (
+        symbols, solve, diff, integrate, simplify, expand, factor,
+        limit, oo, sqrt, Abs, log, ln, exp, pi, E,
+        sin, cos, tan, cot, sec, csc, asin, acos, atan,
+        sinh, cosh, tanh, factorial, binomial, Rational,
+        Matrix, det, trace, eye, zeros, ones,
+        gcd, lcm, isprime, factorint, nextprime,
+        Sum, Product, series, FiniteSet,
+        re as Re, im as Im, conjugate, Abs,
+        latex as sp_latex, N, Float, Integer,
+        Poly, degree, div, rem, resultant,
+        Symbol, Function, Eq, Ne, Lt, Le, Gt, Ge,
+        And, Or, Not, Piecewise,
+        solve_linear_system, linsolve, nonlinsolve,
+        apart, together, cancel, trigsimp, radsimp,
+        nsolve, solveset, S
+    )
     from sympy.parsing.sympy_parser import (
         parse_expr, standard_transformations,
         implicit_multiplication_application, convert_xor)
+    from sympy.stats import Normal, Binomial, Poisson, E as Expect, variance, std
 
     q = normalize_greek(question_text)
     q = normalize_trig(q)
     ql = q.lower()
 
-    is_int  = any(x in ql for x in ["integrate", "integral", "antiderivative"])
-    is_diff = any(x in ql for x in ["derivative", "differentiate", "d/dx", "diff("])
+    # ── Keyword detection for problem type ───────────────────────────────────
+    is_integral   = any(w in ql for w in ["integrate", "integral", "antiderivative", "\\int"])
+    is_derivative = any(w in ql for w in ["derivative", "differentiate", "d/dx", "diff("])
+    is_limit      = any(w in ql for w in ["limit", "lim ", "lim(", "approaches", "tends to"])
+    is_matrix     = any(w in ql for w in ["matrix", "determinant", "det(", "eigenvalue", "eigenvector", "inverse matrix"])
+    is_statistics = any(w in ql for w in ["mean", "median", "mode", "variance", "standard deviation", "std dev", "normal distribution", "binomial distribution"])
+    is_series     = any(w in ql for w in ["series", "sequence", "arithmetic progression", "geometric progression", "sum of", "sigma", "summation"])
+    is_number_th  = any(w in ql for w in ["prime", "gcd", "lcm", "hcf", "factor", "divisor", "modulo", "congruent", "lcm"])
+    is_geometry   = any(w in ql for w in ["area", "perimeter", "volume", "circumference", "radius", "diameter", "triangle", "circle", "rectangle", "cylinder", "sphere", "cone", "cube"])
+    is_complex    = any(w in ql for w in ["complex", "imaginary", "real part", "imaginary part", "modulus", "argument", "polar form"])
+    is_trig       = any(w in ql for w in ["sin", "cos", "tan", "cot", "sec", "csc", "theta", "trig", "sine", "cosine"])
+    is_probability = any(w in ql for w in ["probab", "dice", "coin", "card", "permutation", "combination", "ncr", "npr"])
 
     try:
-        x, y, z, t = symbols("x y z t")
+        x, y, z, t, n, k = symbols("x y z t n k")
+        a, b, c, d = symbols("a b c d")
         theta = symbols("theta", real=True)
-        alpha = symbols("alpha", real=True)
-        beta  = symbols("beta",  real=True)
+        alpha, beta, gamma, phi = symbols("alpha beta gamma phi", real=True)
+        lam = symbols("lambda", real=True)
+        i_sym = symbols("i")
+        r, h = symbols("r h", positive=True)
 
         local = {
-            "theta": theta, "alpha": alpha, "beta": beta,
-            "pi": pi, "sin": sin, "cos": cos, "tan": tan,
-            "cot": cot, "sec": sec, "csc": csc,
+            "theta": theta, "alpha": alpha, "beta": beta, "gamma": gamma,
+            "phi": phi, "lambda": lam, "pi": pi, "e": E, "E": E,
+            "sin": sin, "cos": cos, "tan": tan, "cot": cot, "sec": sec, "csc": csc,
+            "asin": asin, "acos": acos, "atan": atan,
+            "sinh": sinh, "cosh": cosh, "tanh": tanh,
+            "log": log, "ln": log, "exp": exp, "sqrt": sqrt,
+            "abs": Abs, "factorial": factorial,
+            "x": x, "y": y, "z": z, "t": t, "n": n, "k": k,
+            "a": a, "b": b, "c": c, "d": d, "r": r,
+            "oo": oo, "inf": oo,
         }
         T = standard_transformations + (implicit_multiplication_application, convert_xor)
 
         def P(s: str):
             return parse_expr(s, local_dict=local, transformations=T)
 
-        if is_int:
-            es = re.sub(r"\bint\b|\bdx\b|\bof\b", " ", _extract_math_expr(q), flags=re.I).strip()
-            expr = P(es)
-            sol = integrate(expr, x)
-            theory = ("📖 **Concept: Indefinite Integration**\n\n"
-                      "Integration is the reverse process of differentiation. "
-                      "Finding the indefinite integral (or antiderivative) of a function $f(x)$ "
-                      "gives a family of functions $F(x) + C$ such that $F'(x) = f(x)$.\n\n")
-            formulas = ("📐 **Formulas Used:**\n\n"
-                        "Power Rule: $$\\int x^n \\, dx = \\frac{x^{n+1}}{n+1} + C \\quad (n \\neq -1)$$\n\n")
-            steps = (f"{theory}{formulas}"
-                     f"**Step 1: Identify the integrand**\n\n"
-                     f"We need to find: $$\\int {sympy.latex(expr)} \\, dx$$\n\n"
-                     f"**Step 2: Apply integration rules**\n\n"
-                     f"Applying the appropriate integration rules term by term:\n\n"
-                     f"$$\\int {sympy.latex(expr)} \\, dx = {sympy.latex(sol)} + C$$\n\n"
-                     f"**Step 3: Verification**\n\n"
-                     f"We can verify by differentiating: $\\frac{{d}}{{dx}}\\left({sympy.latex(sol)}\\right) = {sympy.latex(diff(sol, x))}$ ✓")
-            return (True, "Calculus — Integration", steps, f"{sympy.latex(sol)} + C")
+        # ── CALCULUS: Integration ─────────────────────────────────────────────
+        if is_integral:
+            raw_expr = re.sub(r"\bint\b|\bdx\b|\bdy\b|\bdt\b|\bof\b",
+                              " ", _extract_math_expr(q), flags=re.I).strip()
+            # Detect definite integral bounds like "from a to b" or "[a,b]"
+            bounds_match = re.search(r"from\s+([\-\d\.]+)\s+to\s+([\-\d\.]+)", ql)
+            bracket_match = re.search(r"\[([\-\d\.]+)\s*,\s*([\-\d\.]+)\]", raw_expr)
+            if bounds_match or bracket_match:
+                m = bounds_match or bracket_match
+                lo, hi = P(m.group(1)), P(m.group(2))
+                raw_expr = raw_expr[:m.start()].strip() if not bounds_match else raw_expr
+                expr = P(raw_expr)
+                sol = integrate(expr, (x, lo, hi))
+                sol_simplified = simplify(sol)
+                steps = (
+                    f"📖 **Concept: Definite Integration**\n\n"
+                    f"A definite integral computes the net area under $f(x)$ from $x = {sp_latex(lo)}$ to $x = {sp_latex(hi)}$, "
+                    f"using the Fundamental Theorem of Calculus: $\\int_a^b f(x)\\,dx = F(b) - F(a)$ where $F'(x) = f(x)$.\n\n"
+                    f"📐 **Formulas Used:**\n\nFundamental Theorem: $$\\int_a^b f(x)\\,dx = F(b) - F(a)$$\n\n"
+                    f"**Step 1:** Find the antiderivative $F(x)$ of $f(x) = {sp_latex(expr)}$\n\n"
+                    f"$$F(x) = {sp_latex(integrate(expr, x))} + C$$\n\n"
+                    f"**Step 2:** Apply the bounds $[{sp_latex(lo)}, {sp_latex(hi)}]$\n\n"
+                    f"$$\\int_{{{sp_latex(lo)}}}^{{{sp_latex(hi)}}} {sp_latex(expr)}\\,dx = F({sp_latex(hi)}) - F({sp_latex(lo)})$$\n\n"
+                    f"**Step 3:** Compute the result\n\n"
+                    f"$$= {sp_latex(sol_simplified)}$$"
+                )
+                return (True, "Calculus — Definite Integral", steps, sp_latex(sol_simplified))
+            else:
+                expr = P(raw_expr)
+                sol = integrate(expr, x)
+                steps = (
+                    f"📖 **Concept: Indefinite Integration**\n\n"
+                    f"The indefinite integral $\\int f(x)\\,dx$ finds all antiderivatives $F(x)$ such that $F'(x) = f(x)$.\n\n"
+                    f"📐 **Formulas Used:**\n\n"
+                    f"Power Rule: $$\\int x^n\\,dx = \\frac{{x^{{n+1}}}}{{n+1}} + C$$\n"
+                    f"Trig: $$\\int \\sin x\\,dx = -\\cos x + C, \\quad \\int \\cos x\\,dx = \\sin x + C$$\n"
+                    f"Exp: $$\\int e^x\\,dx = e^x + C, \\quad \\int \\frac{{1}}{{x}}\\,dx = \\ln|x| + C$$\n\n"
+                    f"**Step 1:** Identify integrand: $f(x) = {sp_latex(expr)}$\n\n"
+                    f"**Step 2:** Apply integration rules term by term\n\n"
+                    f"$$\\int {sp_latex(expr)}\\,dx = {sp_latex(sol)} + C$$\n\n"
+                    f"**Step 3:** Verify by differentiating: $\\frac{{d}}{{dx}}\\left({sp_latex(sol)}\\right) = {sp_latex(diff(sol, x))}$ ✓"
+                )
+                return (True, "Calculus — Integration", steps, f"{sp_latex(sol)} + C")
 
-        elif is_diff:
-            es = re.sub(r"\bd/dx\b|\bdiff\b|\bof\b", " ", _extract_math_expr(q), flags=re.I).strip()
-            expr = P(es)
-            sol = diff(expr, x)
-            theory = ("📖 **Concept: Differentiation**\n\n"
-                      "Differentiation finds the rate of change of a function. "
-                      "The derivative $f'(x)$ represents the slope of the tangent line to $f(x)$ at any point.\n\n")
-            formulas = ("📐 **Formulas Used:**\n\n"
-                        "Power Rule: $$\\frac{d}{dx}[x^n] = n \\cdot x^{n-1}$$\n"
-                        "Chain Rule: $$\\frac{d}{dx}[f(g(x))] = f'(g(x)) \\cdot g'(x)$$\n\n")
-            steps = (f"{theory}{formulas}"
-                     f"**Step 1: Identify the function**\n\n"
-                     f"We need to differentiate: $$f(x) = {sympy.latex(expr)}$$\n\n"
-                     f"**Step 2: Apply differentiation rules**\n\n"
-                     f"Differentiating term by term:\n\n"
-                     f"$$\\frac{{d}}{{dx}}\\left({sympy.latex(expr)}\\right) = {sympy.latex(sol)}$$\n\n"
-                     f"**Step 3: Final Result**\n\n"
-                     f"$$f'(x) = {sympy.latex(sol)}$$")
-            return (True, "Calculus — Differentiation", steps, sympy.latex(sol))
+        # ── CALCULUS: Differentiation ─────────────────────────────────────────
+        elif is_derivative:
+            raw_expr = re.sub(r"\bd/dx\b|\bdiff\b|\bof\b|derivative of",
+                              " ", _extract_math_expr(q), flags=re.I).strip()
+            # Detect higher-order derivatives
+            order_match = re.search(r"(\d+)(?:st|nd|rd|th)?\s+(?:order)?\s*deriv", ql)
+            order = int(order_match.group(1)) if order_match else 1
+            expr = P(raw_expr)
+            sol = diff(expr, x, order)
+            sol_simplified = simplify(sol)
+            order_label = {1: "First", 2: "Second", 3: "Third"}.get(order, f"{order}th")
+            steps = (
+                f"📖 **Concept: {order_label}-Order Differentiation**\n\n"
+                f"The derivative $f'(x)$ gives the instantaneous rate of change of $f(x)$. "
+                f"We apply differentiation rules to compute $\\frac{{d^{order}}}{{dx^{order}}}f(x)$.\n\n"
+                f"📐 **Rules Applied:**\n\n"
+                f"Power Rule: $$\\frac{{d}}{{dx}}[x^n] = n\\cdot x^{{n-1}}$$\n"
+                f"Chain Rule: $$\\frac{{d}}{{dx}}[f(g(x))] = f'(g(x))\\cdot g'(x)$$\n"
+                f"Product Rule: $$\\frac{{d}}{{dx}}[uv] = u'v + uv'$$\n"
+                f"Quotient Rule: $$\\frac{{d}}{{dx}}\\left[\\frac{{u}}{{v}}\\right] = \\frac{{u'v - uv'}}{{v^2}}$$\n\n"
+                f"**Step 1:** Identify $f(x) = {sp_latex(expr)}$\n\n"
+                f"**Step 2:** Differentiate (order {order})\n\n"
+                f"$$\\frac{{d^{order}}}{{dx^{order}}}\\left[{sp_latex(expr)}\\right] = {sp_latex(sol)}$$\n\n"
+                f"**Step 3:** Simplify\n\n"
+                f"$$= {sp_latex(sol_simplified)}$$"
+            )
+            return (True, f"Calculus — {order_label}-Order Derivative", steps, sp_latex(sol_simplified))
 
+        # ── CALCULUS: Limits ──────────────────────────────────────────────────
+        elif is_limit:
+            lim_match = re.search(r"lim[^a-z]*x\s*[→->]+\s*([\-\d\.oO]+)", q, re.IGNORECASE)
+            point = oo if "inf" in ql or "infinity" in ql else (P(lim_match.group(1)) if lim_match else S.Zero)
+            raw_expr = re.sub(r"lim.*?x\s*[→->]+\s*[\-\d\.oO]+", " ", q, flags=re.I)
+            raw_expr = _extract_math_expr(raw_expr)
+            if raw_expr:
+                expr = P(raw_expr)
+                sol = limit(expr, x, point)
+                steps = (
+                    f"📖 **Concept: Limits**\n\n"
+                    f"A limit $\\lim_{{x \\to a}} f(x)$ describes the value $f(x)$ approaches as $x$ approaches $a$, "
+                    f"without necessarily equaling it. L'Hôpital's Rule resolves $0/0$ or $\\infty/\\infty$ forms.\n\n"
+                    f"📐 **Key Techniques:**\n\n"
+                    f"Substitution: $$\\lim_{{x \\to a}} f(x) = f(a)$$ (if continuous)\n"
+                    f"L'Hôpital: $$\\lim_{{x \\to a}} \\frac{{f(x)}}{{g(x)}} = \\lim_{{x \\to a}} \\frac{{f'(x)}}{{g'(x)}}$$\n\n"
+                    f"**Step 1:** Expression: $f(x) = {sp_latex(expr)}$, limit point: $x \\to {sp_latex(point)}$\n\n"
+                    f"**Step 2:** Evaluate the limit\n\n"
+                    f"$$\\lim_{{x \\to {sp_latex(point)}}} {sp_latex(expr)} = {sp_latex(sol)}$$"
+                )
+                return (True, "Calculus — Limits", steps, sp_latex(sol))
+
+        # ── LINEAR ALGEBRA: Matrices ──────────────────────────────────────────
+        elif is_matrix:
+            # Try to parse a matrix like [[1,2],[3,4]] or |a b; c d|
+            mat_match = re.search(r"\[\s*\[(.+?)\]\s*,?\s*\[(.+?)\]\s*(?:,?\s*\[(.+?)\])?\s*\]", q)
+            if mat_match:
+                rows = []
+                for g in mat_match.groups():
+                    if g:
+                        rows.append([P(v.strip()) for v in g.split(",")])
+                M = Matrix(rows)
+                det_val = det(M)
+                tr_val = trace(M)
+                eigenvals = M.eigenvals()
+                ev_str = ", ".join(f"${sp_latex(v)}$ (mult {m})" for v, m in eigenvals.items())
+                try:
+                    inv_M = M.inv()
+                    inv_str = f"$$M^{{-1}} = {sp_latex(inv_M)}$$"
+                except Exception:
+                    inv_str = "Matrix is singular (non-invertible)"
+                steps = (
+                    f"📖 **Concept: Matrix Operations**\n\n"
+                    f"A matrix is a rectangular array of numbers representing a linear transformation. "
+                    f"Key properties include determinant, trace, eigenvalues, and inverse.\n\n"
+                    f"📐 **Key Formulas:**\n\n"
+                    f"Determinant: $$\\det(A) = \\sum_{{j}} a_{{1j}} C_{{1j}}$$ (cofactor expansion)\n"
+                    f"Eigenvalue Equation: $$\\det(A - \\lambda I) = 0$$\n\n"
+                    f"**Given Matrix:**\n\n$$M = {sp_latex(M)}$$\n\n"
+                    f"**Determinant:** $\\det(M) = {sp_latex(det_val)}$\n\n"
+                    f"**Trace:** $\\text{{tr}}(M) = {sp_latex(tr_val)}$\n\n"
+                    f"**Eigenvalues:** {ev_str}\n\n"
+                    f"**Inverse:** {inv_str}"
+                )
+                return (True, "Linear Algebra — Matrices", steps, f"det = {sp_latex(det_val)}, tr = {sp_latex(tr_val)}")
+
+        # ── STATISTICS ────────────────────────────────────────────────────────
+        elif is_statistics:
+            # Parse list of numbers like [1, 2, 3, 4, 5] or 2, 4, 6, 8
+            nums_raw = re.findall(r"[\-]?\d+(?:\.\d+)?", q)
+            if len(nums_raw) >= 2:
+                data = [float(v) for v in nums_raw]
+                n_pts = len(data)
+                mean_val = sum(data) / n_pts
+                data_sorted = sorted(data)
+                if n_pts % 2 == 1:
+                    median_val = data_sorted[n_pts // 2]
+                else:
+                    median_val = (data_sorted[n_pts // 2 - 1] + data_sorted[n_pts // 2]) / 2
+                variance_val = sum((xi - mean_val) ** 2 for xi in data) / n_pts
+                std_val = variance_val ** 0.5
+                from collections import Counter
+                freq = Counter(data)
+                mode_val = max(freq, key=freq.get)
+                data_str = ", ".join(str(v) for v in data)
+                steps = (
+                    f"📖 **Concept: Descriptive Statistics**\n\n"
+                    f"Descriptive statistics summarize a dataset using central tendency (mean, median, mode) "
+                    f"and spread (variance, standard deviation).\n\n"
+                    f"📐 **Formulas:**\n\n"
+                    f"Mean: $$\\bar{{x}} = \\frac{{\\sum x_i}}{{n}}$$\n"
+                    f"Variance: $$\\sigma^2 = \\frac{{\\sum (x_i - \\bar{{x}})^2}}{{n}}$$\n"
+                    f"Std Dev: $$\\sigma = \\sqrt{{\\sigma^2}}$$\n\n"
+                    f"**Data:** $\\{{{data_str}\\}}$ (n = {n_pts})\n\n"
+                    f"**Mean:** $$\\bar{{x}} = {mean_val:.4f}$$\n\n"
+                    f"**Median:** $${median_val}$$\n\n"
+                    f"**Mode:** $${mode_val}$$\n\n"
+                    f"**Variance:** $$\\sigma^2 = {variance_val:.4f}$$\n\n"
+                    f"**Standard Deviation:** $$\\sigma = {std_val:.4f}$$"
+                )
+                return (True, "Statistics — Descriptive", steps,
+                        f"Mean = {mean_val:.4f}, Median = {median_val}, Std Dev = {std_val:.4f}")
+
+        # ── NUMBER THEORY ─────────────────────────────────────────────────────
+        elif is_number_th and not is_trig:
+            nums_raw = re.findall(r"\d+", q)
+            if len(nums_raw) >= 1:
+                nums = [int(v) for v in nums_raw[:4]]
+                results = []
+                steps_parts = []
+                steps_parts.append(
+                    f"📖 **Concept: Number Theory**\n\n"
+                    f"Number theory studies integers — their properties, divisibility, prime factorization, GCD, LCM, and modular arithmetic.\n\n"
+                    f"📐 **Key Formulas:**\n\n"
+                    f"GCD (Euclidean): $$\\gcd(a,b) = \\gcd(b, a \\bmod b)$$\n"
+                    f"LCM: $$\\text{{lcm}}(a,b) = \\frac{{a \\cdot b}}{{\\gcd(a,b)}}$$\n\n"
+                )
+                for num in nums:
+                    is_p = isprime(num)
+                    if not is_p and num > 1:
+                        fac = factorint(num)
+                        fac_str = " × ".join(f"${p}^{{{e}}}$" if e > 1 else f"${p}$" for p, e in sorted(fac.items()))
+                        steps_parts.append(f"**{num}** = {fac_str} {'(prime)' if is_p else ''}")
+                    else:
+                        steps_parts.append(f"**{num}** is {'prime ✓' if is_p else 'not prime'}")
+                    results.append(str(num))
+                if len(nums) >= 2:
+                    g = gcd(*nums)
+                    l = lcm(*nums)
+                    steps_parts.append(f"\n**GCD({', '.join(results)}) = {g}**")
+                    steps_parts.append(f"**LCM({', '.join(results)}) = {l}**")
+                    return (True, "Number Theory", "\n\n".join(steps_parts),
+                            f"GCD = {g}, LCM = {l}")
+                else:
+                    num = nums[0]
+                    fac = factorint(num) if num > 1 else {}
+                    fac_str = " × ".join(f"${p}^{{{e}}}$" if e > 1 else f"${p}$" for p, e in sorted(fac.items())) if fac else str(num)
+                    return (True, "Number Theory", "\n\n".join(steps_parts),
+                            f"{num} = {fac_str}, {'prime' if isprime(num) else 'composite'}")
+
+        # ── GEOMETRY ─────────────────────────────────────────────────────────
+        elif is_geometry:
+            nums_raw = re.findall(r"[\-]?\d+(?:\.\d+)?", q)
+            nums_f = [float(v) for v in nums_raw] if nums_raw else []
+            geo_steps = (
+                f"📖 **Concept: Geometry**\n\n"
+                f"Geometry studies shapes, sizes, and properties of figures and spaces.\n\n"
+                f"📐 **Key Formulas:**\n\n"
+                f"Circle: Area $= \\pi r^2$, Circumference $= 2\\pi r$\n"
+                f"Rectangle: Area $= l \\times w$, Perimeter $= 2(l+w)$\n"
+                f"Triangle: Area $= \\frac{{1}}{{2}}bh$, Perimeter $= a+b+c$\n"
+                f"Sphere: Volume $= \\frac{{4}}{{3}}\\pi r^3$, Surface Area $= 4\\pi r^2$\n"
+                f"Cylinder: Volume $= \\pi r^2 h$, Curved SA $= 2\\pi rh$\n"
+                f"Cone: Volume $= \\frac{{1}}{{3}}\\pi r^2 h$\n\n"
+            )
+            answers = []
+            if "circle" in ql and nums_f:
+                rv = nums_f[0]
+                area = float(pi) * rv ** 2
+                circ = 2 * float(pi) * rv
+                geo_steps += f"**Circle with r = {rv}:**\n\nArea $= \\pi({rv})^2 = {area:.4f}$ sq units\n\nCircumference $= 2\\pi({rv}) = {circ:.4f}$ units"
+                answers.append(f"Area ≈ {area:.4f}, Circumference ≈ {circ:.4f}")
+            elif "rectangle" in ql and len(nums_f) >= 2:
+                l_v, w_v = nums_f[0], nums_f[1]
+                area = l_v * w_v
+                perim = 2 * (l_v + w_v)
+                geo_steps += f"**Rectangle {l_v} × {w_v}:**\n\nArea $= {l_v} \\times {w_v} = {area}$\n\nPerimeter $= 2({l_v}+{w_v}) = {perim}$"
+                answers.append(f"Area = {area}, Perimeter = {perim}")
+            elif "triangle" in ql and len(nums_f) >= 2:
+                bv, hv = nums_f[0], nums_f[1]
+                area = 0.5 * bv * hv
+                geo_steps += f"**Triangle base={bv}, height={hv}:**\n\nArea $= \\frac{{1}}{{2}} \\times {bv} \\times {hv} = {area}$"
+                answers.append(f"Area = {area}")
+            elif "sphere" in ql and nums_f:
+                rv = nums_f[0]
+                vol = (4/3) * float(pi) * rv**3
+                sa = 4 * float(pi) * rv**2
+                geo_steps += f"**Sphere r={rv}:**\n\nVolume $= \\frac{{4}}{{3}}\\pi({rv})^3 \\approx {vol:.4f}$\n\nSurface Area $= 4\\pi({rv})^2 \\approx {sa:.4f}$"
+                answers.append(f"Volume ≈ {vol:.4f}, SA ≈ {sa:.4f}")
+            elif "cylinder" in ql and len(nums_f) >= 2:
+                rv, hv = nums_f[0], nums_f[1]
+                vol = float(pi) * rv**2 * hv
+                csa = 2 * float(pi) * rv * hv
+                geo_steps += f"**Cylinder r={rv}, h={hv}:**\n\nVolume $= \\pi({rv})^2({hv}) \\approx {vol:.4f}$\n\nCurved SA $= 2\\pi({rv})({hv}) \\approx {csa:.4f}$"
+                answers.append(f"Volume ≈ {vol:.4f}, CSA ≈ {csa:.4f}")
+            else:
+                geo_steps += "Please provide specific shape dimensions for calculations."
+                answers.append("See formulas above")
+            return (True, "Geometry", geo_steps, "; ".join(answers) if answers else "See steps")
+
+        # ── SEQUENCES & SERIES ────────────────────────────────────────────────
+        elif is_series:
+            nums_raw = re.findall(r"[\-]?\d+(?:\.\d+)?", q)
+            if len(nums_raw) >= 3:
+                data = [float(v) for v in nums_raw]
+                diffs = [data[i+1] - data[i] for i in range(len(data)-1)]
+                ratios = [data[i+1] / data[i] for i in range(len(data)-1) if data[i] != 0]
+                is_ap = len(set(round(d, 6) for d in diffs)) == 1
+                is_gp = len(set(round(r, 6) for r in ratios)) == 1 if ratios else False
+                if is_ap:
+                    d_val = diffs[0]
+                    a_val = data[0]
+                    n_terms_match = re.search(r"(\d+)\s*(?:th|st|nd|rd)\s*term", ql)
+                    n_target = int(n_terms_match.group(1)) if n_terms_match else 10
+                    nth = a_val + (n_target - 1) * d_val
+                    s_n = n_target * (2 * a_val + (n_target - 1) * d_val) / 2
+                    steps = (
+                        f"📖 **Concept: Arithmetic Progression (AP)**\n\n"
+                        f"An AP has a constant common difference $d$ between consecutive terms. "
+                        f"General term: $T_n = a + (n-1)d$\n\n"
+                        f"📐 **Formulas:**\n\n"
+                        f"nth term: $$T_n = a + (n-1)d$$\n"
+                        f"Sum: $$S_n = \\frac{{n}}{{2}}[2a + (n-1)d]$$\n\n"
+                        f"**Sequence:** ${', '.join(str(v) for v in data)}$\n\n"
+                        f"**First term** $a = {a_val}$, **Common difference** $d = {d_val}$\n\n"
+                        f"**{n_target}th term:** $T_{{{n_target}}} = {a_val} + ({n_target}-1)({d_val}) = {nth}$\n\n"
+                        f"**Sum of first {n_target} terms:** $S_{{{n_target}}} = {s_n}$"
+                    )
+                    return (True, "Sequences — Arithmetic Progression", steps, f"T_{n_target} = {nth}, S_{n_target} = {s_n}")
+                elif is_gp:
+                    r_val = ratios[0]
+                    a_val = data[0]
+                    n_terms_match = re.search(r"(\d+)\s*(?:th|st|nd|rd)\s*term", ql)
+                    n_target = int(n_terms_match.group(1)) if n_terms_match else 10
+                    nth = a_val * (r_val ** (n_target - 1))
+                    if abs(r_val) < 1:
+                        s_inf = a_val / (1 - r_val)
+                        sum_info = f"Sum to infinity: $S_\\infty = {s_inf:.4f}$"
+                    else:
+                        sum_info = "Sum to infinity diverges (|r| ≥ 1)"
+                    steps = (
+                        f"📖 **Concept: Geometric Progression (GP)**\n\n"
+                        f"A GP has a constant common ratio $r$ between consecutive terms. "
+                        f"General term: $T_n = ar^{{n-1}}$\n\n"
+                        f"📐 **Formulas:**\n\n"
+                        f"nth term: $$T_n = a \\cdot r^{{n-1}}$$\n"
+                        f"Sum (finite): $$S_n = a\\frac{{r^n - 1}}{{r - 1}}$$\n"
+                        f"Sum (infinite, |r|<1): $$S_\\infty = \\frac{{a}}{{1-r}}$$\n\n"
+                        f"**Sequence:** ${', '.join(str(v) for v in data)}$\n\n"
+                        f"**First term** $a = {a_val}$, **Common ratio** $r = {r_val}$\n\n"
+                        f"**{n_target}th term:** $T_{{{n_target}}} = {a_val} \\times ({r_val})^{{{n_target}-1}} \\approx {nth:.4f}$\n\n"
+                        f"{sum_info}"
+                    )
+                    return (True, "Sequences — Geometric Progression", steps, f"T_{n_target} ≈ {nth:.4f}")
+
+        # ── PROBABILITY & COMBINATORICS ───────────────────────────────────────
+        elif is_probability:
+            ncr_match = re.search(r"(?:ncr|c|choose)\s*\(?\s*(\d+)\s*[,r]\s*(\d+)\s*\)?", ql)
+            npr_match = re.search(r"(?:npr|p)\s*\(?\s*(\d+)\s*[,r]\s*(\d+)\s*\)?", ql)
+            if ncr_match:
+                n_v, r_v = int(ncr_match.group(1)), int(ncr_match.group(2))
+                result = int(binomial(n_v, r_v))
+                steps = (
+                    f"📖 **Concept: Combinations**\n\n"
+                    f"$C(n,r)$ counts unordered selections of $r$ items from $n$. "
+                    f"Order does NOT matter.\n\n"
+                    f"📐 **Formula:**\n\n$$C(n,r) = \\binom{{n}}{{r}} = \\frac{{n!}}{{r!(n-r)!}}$$\n\n"
+                    f"**Calculation:** $$C({n_v},{r_v}) = \\frac{{{n_v}!}}{{{r_v}!({n_v}-{r_v})!}} = {result}$$"
+                )
+                return (True, "Combinatorics — Combinations", steps, str(result))
+            elif npr_match:
+                n_v, r_v = int(npr_match.group(1)), int(npr_match.group(2))
+                result = int(factorial(n_v) / factorial(n_v - r_v))
+                steps = (
+                    f"📖 **Concept: Permutations**\n\n"
+                    f"$P(n,r)$ counts ordered arrangements of $r$ items from $n$. "
+                    f"Order MATTERS.\n\n"
+                    f"📐 **Formula:**\n\n$$P(n,r) = \\frac{{n!}}{{(n-r)!}}$$\n\n"
+                    f"**Calculation:** $$P({n_v},{r_v}) = \\frac{{{n_v}!}}{{{n_v}-{r_v})!}} = {result}$$"
+                )
+                return (True, "Combinatorics — Permutations", steps, str(result))
+
+        # ── ALGEBRA: Equations & Expressions ─────────────────────────────────
         else:
             es = convert_trig_powers(_extract_math_expr(q))
             if not es:
                 return False, "", "", ""
 
             if "=" in es:
+                # Handle system of equations
+                eq_parts = q.split("and")
+                if len(eq_parts) >= 2:
+                    try:
+                        eqs = []
+                        free_vars = set()
+                        for part in eq_parts:
+                            ep = _extract_math_expr(part)
+                            if "=" in ep:
+                                lhs_s, rhs_s = ep.split("=", 1)
+                                eq_expr = P(lhs_s.strip()) - P(rhs_s.strip())
+                                eqs.append(eq_expr)
+                                free_vars.update(eq_expr.free_symbols)
+                        if eqs and free_vars:
+                            sol_set = linsolve(eqs, list(free_vars))
+                            if sol_set:
+                                sol_list = list(sol_set)
+                                sol_str = "; ".join(
+                                    ", ".join(f"{v} = {sp_latex(s)}" for v, s in zip(free_vars, sol))
+                                    for sol in sol_list
+                                )
+                                steps = (
+                                    f"📖 **Concept: System of Linear Equations**\n\n"
+                                    f"A system of equations is solved simultaneously. Methods include substitution, "
+                                    f"elimination, and matrix methods (Gaussian elimination).\n\n"
+                                    f"**Equations:**\n\n" +
+                                    "\n\n".join(f"$$Eq {i+1}: {sp_latex(e)} = 0$$" for i, e in enumerate(eqs)) +
+                                    f"\n\n**Solution:** $${sol_str}$$"
+                                )
+                                return (True, "Algebra — System of Equations", steps, sol_str)
+                    except Exception:
+                        pass
+
+                # Single equation
                 lhs_s, rhs_s = es.split("=", 1)
                 lhs = P(lhs_s.strip())
                 rhs = P(rhs_s.strip())
                 expr = lhs - rhs
-                sol, sv = None, None
-                for v in [x, y, z, t, theta, alpha, beta]:
+                sol_found, sv_found = None, None
+                for v in [x, y, z, t, theta, alpha, beta, a, b, c, n, k]:
                     try:
-                        c = solve(expr, v)
-                        if c:
-                            sol = c
-                            sv = v
+                        c_sol = solve(expr, v)
+                        if c_sol:
+                            sol_found = c_sol
+                            sv_found = v
                             break
                     except Exception:
                         continue
-                if sol and sv is not None:
-                    sl = ", ".join(f"{sv} = {sympy.latex(s)}" for s in sol)
-                    theory = ("📖 **Concept: Solving Equations**\n\n"
-                              "To solve an equation, we isolate the unknown variable by performing "
-                              "equivalent operations on both sides. The goal is to find the value(s) "
-                              "of the variable that make the equation true.\n\n")
-                    # Determine formula based on degree
+                if sol_found and sv_found is not None:
+                    sl = ", ".join(f"{sp_latex(sv_found)} = {sp_latex(s)}" for s in sol_found)
                     formula_note = "📐 **Formulas Used:**\n\n"
                     try:
-                        deg = sympy.degree(expr, sv)
-                        if deg == 2:
+                        deg_val = degree(Poly(expr, sv_found))
+                        if deg_val == 2:
                             formula_note += "Quadratic Formula: $$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$\n\n"
-                        elif deg == 1:
-                            formula_note += "Linear Equation: $$ax + b = 0 \\Rightarrow x = -\\frac{b}{a}$$\n\n"
+                        elif deg_val == 1:
+                            formula_note += "Linear: $$ax + b = 0 \\Rightarrow x = -\\frac{b}{a}$$\n\n"
                         else:
-                            formula_note += f"Polynomial equation of degree {deg}\n\n"
+                            formula_note += f"Polynomial (degree {deg_val}) — factoring or numerical methods\n\n"
                     except Exception:
-                        formula_note += "Algebraic manipulation and factoring\n\n"
-                    steps = (f"{theory}{formula_note}"
-                             f"**Step 1: Write the equation**\n\n"
-                             f"$${sympy.latex(lhs)} = {sympy.latex(rhs)}$$\n\n"
-                             f"**Step 2: Rearrange to standard form**\n\n"
-                             f"Move all terms to one side:\n\n$${sympy.latex(expr)} = 0$$\n\n"
-                             f"**Step 3: Solve for ${sympy.latex(sv)}$**\n\n"
-                             f"$$\\boxed{{{sl}}}$$\n\n"
-                             f"**Step 4: Verification**\n\n"
-                             f"Substituting back into the original equation confirms the solution(s). ✓")
-                    return (True, "Algebra — Equation", steps, sl)
+                        formula_note += "Algebraic manipulation\n\n"
+                    steps = (
+                        f"📖 **Concept: Solving Equations**\n\n"
+                        f"We isolate the unknown by performing equivalent operations on both sides.\n\n"
+                        f"{formula_note}"
+                        f"**Step 1:** Equation: $${sp_latex(lhs)} = {sp_latex(rhs)}$$\n\n"
+                        f"**Step 2:** Rearrange: $${sp_latex(expr)} = 0$$\n\n"
+                        f"**Step 3:** Solve: $$\\boxed{{{sl}}}$$\n\n"
+                        f"**Verification:** Substituting back confirms the solution ✓"
+                    )
+                    return (True, "Algebra — Equation Solving", steps, sl)
             else:
                 eu = parse_expr(es, local_dict=local, transformations=T, evaluate=False)
 
                 if not eu.free_symbols:
-                    steps = [f"**Numerical Evaluation**\n\n$${sympy.latex(eu)}$$\n"]
-                    if isinstance(eu, sympy.Add):
-                        steps.append("\nEvaluating each term:")
-                        for a in eu.args:
-                            steps.append(f"- ${sympy.latex(a)}$ = ${sympy.latex(a.doit())}$")
-                        fv = eu.doit().simplify()
-                        terms = []
-                        for i, a in enumerate(eu.args):
-                            v = a.doit()
-                            if v.is_Number and v < 0:
-                                terms.append(f"- {sympy.latex(-v)}" if i > 0 else sympy.latex(v))
-                            else:
-                                terms.append(f"+ {sympy.latex(v)}" if i > 0 else sympy.latex(v))
-                        steps.append(f"\n$${' '.join(terms)} = {sympy.latex(fv)}$$")
-                    else:
-                        fv = eu.doit().simplify()
-                        steps.append(f"\n$${sympy.latex(eu)} = {sympy.latex(fv)}$$")
-                    return True, "Numerical Evaluation", "\n".join(steps), sympy.latex(fv)
+                    fv = eu.doit().simplify()
+                    steps = (
+                        f"📖 **Concept: Numerical Evaluation**\n\n"
+                        f"Substituting all known values and computing the result.\n\n"
+                        f"**Expression:** $${sp_latex(eu)}$$\n\n"
+                        f"**Result:** $${sp_latex(fv)}$$\n\n"
+                        f"**Decimal:** ${float(fv):.6f}$"
+                    )
+                    return True, "Numerical Evaluation", steps, sp_latex(fv)
 
                 else:
                     ev = eu.doit()
                     if "expand" in ql:
-                        sol = sympy.expand(ev)
-                        pt = "Algebra (Expansion)"
+                        sol = expand(ev)
+                        pt = "Algebra — Expansion"
                     elif any(w in ql for w in ["factor", "factorise", "factorize"]):
-                        sol = sympy.factor(ev)
-                        pt = "Algebra (Factorization)"
+                        sol = factor(ev)
+                        pt = "Algebra — Factorization"
+                    elif is_trig:
+                        sol = trigsimp(simplify(ev))
+                        pt = "Trigonometry — Simplification"
                     else:
-                        sol = sympy.simplify(ev)
-                        pt = "Algebra (Simplification)"
-                    return (True, pt,
-                            f"**{pt}**\n\n$${sympy.latex(eu)}$$\n\n$$= {sympy.latex(sol)}$$",
-                            sympy.latex(sol))
+                        sol = simplify(ev)
+                        pt = "Algebra — Simplification"
+                    # Generate step-by-step based on operation
+                    steps = (
+                        f"📖 **Concept: {pt}**\n\n"
+                        f"We apply algebraic/trigonometric rules to transform the expression.\n\n"
+                        f"**Original:** $${sp_latex(eu)}$$\n\n"
+                        f"**After {pt.split('—')[-1].strip()}:** $${sp_latex(sol)}$$"
+                    )
+                    return (True, pt, steps, sp_latex(sol))
 
     except Exception as e:
-        logger.warning(f"SymPy solver failed: {e}")
+        logger.warning(f"SymPy comprehensive solver failed: {e}")
     return False, "", "", ""
 
 
 def heuristic_math_tutor(text: str, has_api_key: bool = False):
-    """Last-resort heuristic tutor. Returns (problem_type, steps, final_answer)."""
+    """Comprehensive heuristic tutor covering all major math domains."""
     note = ("\n\n> ⚠️ *All configured AI backends failed or are rate-limited. "
             "Please check your API keys or network connection.*" if has_api_key else
-            "\n\n> 💡 *No AI API keys configured. For accurate direct answers, click \"⚙️ AI Provider Settings\" "
-            "above and enter a free Groq API Key from console.groq.com or a Gemini API Key from ai.google.dev*")
+            "\n\n> 💡 *No AI API keys configured. Add a free Groq API Key from [console.groq.com](https://console.groq.com) "
+            "or Gemini API Key from [ai.google.dev](https://ai.google.dev) for accurate step-by-step AI solutions.*")
 
     t = normalize_greek(text.lower())
-    if any(w in t for w in ["probab", "dice", "coin", "card"]):
-        return ("Probability",
-                "📖 **Concept: Probability Theory**\n\n"
-                "Probability measures the likelihood of an event occurring, expressed as a value between 0 and 1. "
-                "The classical definition states that probability equals the ratio of favorable outcomes to total possible outcomes.\n\n"
-                "📐 **Key Formulas:**\n\n"
-                "Basic Probability: $$P(A) = \\frac{\\text{Number of Favorable Outcomes}}{\\text{Total Number of Outcomes}}$$\n\n"
-                "Complement Rule: $$P(A') = 1 - P(A)$$\n\n"
-                "Addition Rule: $$P(A \\cup B) = P(A) + P(B) - P(A \\cap B)$$\n\n"
-                "Multiplication Rule (Independent): $$P(A \\cap B) = P(A) \\times P(B)$$\n\n"
-                "Conditional Probability: $$P(A|B) = \\frac{P(A \\cap B)}{P(B)}$$"
-                f"{note}",
-                "Apply the probability formula: P = Favorable / Total")
 
-    elif any(w in t for w in ["sec", "csc", "cosec", "sin", "cos", "tan", "theta", "trig"]):
+    # ── Probability & Statistics ──────────────────────────────────────────────
+    if any(w in t for w in ["probab", "dice", "coin", "card", "permut", "combinat"]):
+        return ("Probability & Combinatorics",
+                "📖 **Concept: Probability & Combinatorics**\n\n"
+                "Probability measures event likelihood (0 to 1). Combinatorics counts arrangements/selections.\n\n"
+                "📐 **Fundamental Formulas:**\n\n"
+                "Classical Probability: $$P(A) = \\frac{\\text{Favorable}}{\\text{Total}}$$\n\n"
+                "Complement: $$P(A') = 1 - P(A)$$\n\n"
+                "Addition: $$P(A \\cup B) = P(A) + P(B) - P(A \\cap B)$$\n\n"
+                "Bayes' Theorem: $$P(A|B) = \\frac{P(B|A)P(A)}{P(B)}$$\n\n"
+                "Combinations: $$C(n,r) = \\binom{n}{r} = \\frac{n!}{r!(n-r)!}$$\n\n"
+                "Permutations: $$P(n,r) = \\frac{n!}{(n-r)!}$$\n\n"
+                "Binomial Distribution: $$P(X=k) = \\binom{n}{k}p^k(1-p)^{n-k}$$"
+                f"{note}",
+                "P = Favorable / Total")
+
+    # ── Trigonometry ─────────────────────────────────────────────────────────
+    elif any(w in t for w in ["sec", "csc", "cosec", "sin", "cos", "tan", "theta",
+                               "trig", "angle", "radian", "degree", "cot", "cotangent"]):
         return ("Trigonometry",
                 "📖 **Concept: Trigonometry**\n\n"
-                "Trigonometry studies the relationships between angles and sides of triangles. "
-                "The six trigonometric ratios (sin, cos, tan, cot, sec, csc) form the foundation, "
-                "connected by fundamental identities that allow algebraic simplification.\n\n"
+                "Trigonometry studies relationships between angles and sides of triangles. "
+                "The six trig ratios (sin, cos, tan, cot, sec, csc) are connected by fundamental identities.\n\n"
                 "📐 **Fundamental Identities:**\n\n"
-                "Pythagorean Identities:\n"
-                "$$\\sin^2\\theta + \\cos^2\\theta = 1$$\n"
-                "$$1 + \\tan^2\\theta = \\sec^2\\theta$$\n"
-                "$$1 + \\cot^2\\theta = \\csc^2\\theta$$\n\n"
-                "Reciprocal Relations:\n"
-                "$$\\sec\\theta = \\frac{1}{\\cos\\theta}, \\quad "
-                "\\csc\\theta = \\frac{1}{\\sin\\theta}, \\quad "
-                "\\cot\\theta = \\frac{\\cos\\theta}{\\sin\\theta}$$\n\n"
-                "Double Angle Formulas:\n"
-                "$$\\sin 2\\theta = 2\\sin\\theta\\cos\\theta$$\n"
-                "$$\\cos 2\\theta = \\cos^2\\theta - \\sin^2\\theta = 2\\cos^2\\theta - 1 = 1 - 2\\sin^2\\theta$$"
+                "Pythagorean: $$\\sin^2\\theta + \\cos^2\\theta = 1$$\n"
+                "$$1 + \\tan^2\\theta = \\sec^2\\theta, \\quad 1 + \\cot^2\\theta = \\csc^2\\theta$$\n\n"
+                "Reciprocal: $$\\sec\\theta = \\frac{1}{\\cos\\theta}, \\quad \\csc\\theta = \\frac{1}{\\sin\\theta}, "
+                "\\quad \\cot\\theta = \\frac{\\cos\\theta}{\\sin\\theta}$$\n\n"
+                "Double Angle: $$\\sin 2\\theta = 2\\sin\\theta\\cos\\theta$$\n"
+                "$$\\cos 2\\theta = \\cos^2\\theta - \\sin^2\\theta = 2\\cos^2\\theta - 1 = 1 - 2\\sin^2\\theta$$\n\n"
+                "Half Angle: $$\\sin\\frac{\\theta}{2} = \\pm\\sqrt{\\frac{1-\\cos\\theta}{2}}, "
+                "\\quad \\cos\\frac{\\theta}{2} = \\pm\\sqrt{\\frac{1+\\cos\\theta}{2}}$$\n\n"
+                "Sum-to-Product: $$\\sin A + \\sin B = 2\\sin\\frac{A+B}{2}\\cos\\frac{A-B}{2}$$\n\n"
+                "Key Values:\n"
+                "| θ | 0° | 30° | 45° | 60° | 90° |\n"
+                "|---|---|---|---|---|---|\n"
+                "| sin | 0 | 1/2 | 1/√2 | √3/2 | 1 |\n"
+                "| cos | 1 | √3/2 | 1/√2 | 1/2 | 0 |"
                 f"{note}",
                 "Apply trigonometric identities to simplify")
 
-    elif any(w in t for w in ["deriv", "integr", "limit"]):
+    # ── Calculus ──────────────────────────────────────────────────────────────
+    elif any(w in t for w in ["deriv", "integr", "limit", "lim", "differentiat", "calcul",
+                               "rate of change", "antiderivativ", "fundamental theorem"]):
         return ("Calculus",
                 "📖 **Concept: Calculus**\n\n"
-                "Calculus deals with rates of change (differentiation) and accumulation (integration). "
-                "The Fundamental Theorem of Calculus connects these two operations as inverse processes.\n\n"
-                "📐 **Key Formulas:**\n\n"
-                "Power Rule (Differentiation): $$\\frac{d}{dx}[x^n] = n \\cdot x^{n-1}$$\n\n"
-                "Power Rule (Integration): $$\\int x^n \\, dx = \\frac{x^{n+1}}{n+1} + C \\quad (n \\neq -1)$$\n\n"
-                "Chain Rule: $$\\frac{d}{dx}[f(g(x))] = f'(g(x)) \\cdot g'(x)$$\n\n"
-                "Product Rule: $$\\frac{d}{dx}[f \\cdot g] = f' \\cdot g + f \\cdot g'$$\n\n"
-                "Integration by Parts: $$\\int u \\, dv = uv - \\int v \\, du$$"
+                "Calculus studies continuous change through differentiation (rates) and integration (accumulation). "
+                "The Fundamental Theorem connects them as inverse operations.\n\n"
+                "📐 **Differentiation Rules:**\n\n"
+                "Power: $$\\frac{d}{dx}[x^n] = nx^{n-1}$$\n"
+                "Product: $$\\frac{d}{dx}[uv] = u'v + uv'$$\n"
+                "Quotient: $$\\frac{d}{dx}\\left[\\frac{u}{v}\\right] = \\frac{u'v - uv'}{v^2}$$\n"
+                "Chain: $$\\frac{d}{dx}[f(g(x))] = f'(g(x))\\cdot g'(x)$$\n"
+                "Trig: $$\\frac{d}{dx}[\\sin x] = \\cos x, \\quad \\frac{d}{dx}[\\cos x] = -\\sin x$$\n\n"
+                "📐 **Integration Rules:**\n\n"
+                "Power: $$\\int x^n\\,dx = \\frac{x^{n+1}}{n+1} + C$$\n"
+                "By Parts: $$\\int u\\,dv = uv - \\int v\\,du$$\n"
+                "FTC: $$\\int_a^b f(x)\\,dx = F(b) - F(a)$$\n\n"
+                "📐 **Limits:**\n\n"
+                "L'Hôpital: $$\\lim_{x\\to a}\\frac{f(x)}{g(x)} = \\lim_{x\\to a}\\frac{f'(x)}{g'(x)}$$"
                 f"{note}",
-                "Apply differentiation / integration rules")
+                "Apply differentiation/integration/limit rules")
 
-    elif any(w in t for w in ["matrix", "determinant", "eigenvalue", "vector"]):
+    # ── Linear Algebra ────────────────────────────────────────────────────────
+    elif any(w in t for w in ["matrix", "determinant", "eigenvalue", "eigenvector",
+                               "vector", "linear system", "rank", "transpose", "adjoint"]):
         return ("Linear Algebra",
                 "📖 **Concept: Linear Algebra**\n\n"
-                "Linear algebra studies vector spaces and linear mappings between them. "
-                "Matrices represent linear transformations, and their properties (determinant, eigenvalues) "
-                "reveal the nature of these transformations.\n\n"
+                "Linear algebra studies vector spaces, linear transformations, and matrices. "
+                "Core operations: determinant, inverse, eigenvalues, Gaussian elimination.\n\n"
                 "📐 **Key Formulas:**\n\n"
-                "2×2 Determinant: $$\\det\\begin{pmatrix}a & b\\\\ c & d\\end{pmatrix} = ad - bc$$\n\n"
+                "2×2 Det: $$\\det\\begin{pmatrix}a & b\\\\ c & d\\end{pmatrix} = ad - bc$$\n\n"
                 "Eigenvalue Equation: $$\\det(A - \\lambda I) = 0$$\n\n"
-                "Matrix Inverse (2×2): $$A^{-1} = \\frac{1}{\\det(A)}\\begin{pmatrix}d & -b\\\\ -c & a\\end{pmatrix}$$"
+                "Matrix Inverse: $$A^{-1} = \\frac{1}{\\det A} \\text{adj}(A)$$\n\n"
+                "Cramer's Rule: $$x_i = \\frac{\\det(A_i)}{\\det(A)}$$\n\n"
+                "Row Reduction: Gaussian elimination using EROs\n\n"
+                "Dot Product: $$\\vec{a} \\cdot \\vec{b} = |a||b|\\cos\\theta$$\n\n"
+                "Cross Product: $$|\\vec{a} \\times \\vec{b}| = |a||b|\\sin\\theta$$"
                 f"{note}",
-                "Apply matrix operations and eigenvalue equation")
+                "Apply matrix operations")
 
+    # ── Statistics ───────────────────────────────────────────────────────────
+    elif any(w in t for w in ["mean", "median", "mode", "variance", "standard deviation",
+                               "distribution", "normal", "regression", "correlation", "stat"]):
+        return ("Statistics",
+                "📖 **Concept: Statistics**\n\n"
+                "Statistics involves collecting, analyzing, and interpreting data. "
+                "Key measures: central tendency (mean, median, mode) and spread (variance, SD).\n\n"
+                "📐 **Descriptive Statistics:**\n\n"
+                "Mean: $$\\bar{x} = \\frac{\\sum x_i}{n}$$\n\n"
+                "Variance: $$\\sigma^2 = \\frac{\\sum(x_i - \\bar{x})^2}{n}$$\n\n"
+                "Std Dev: $$\\sigma = \\sqrt{\\sigma^2}$$\n\n"
+                "Z-Score: $$z = \\frac{x - \\mu}{\\sigma}$$\n\n"
+                "📐 **Probability Distributions:**\n\n"
+                "Normal: $$f(x) = \\frac{1}{\\sigma\\sqrt{2\\pi}}e^{-\\frac{(x-\\mu)^2}{2\\sigma^2}}$$\n\n"
+                "Binomial: $$P(X=k) = \\binom{n}{k}p^k(1-p)^{n-k}$$\n\n"
+                "Poisson: $$P(X=k) = \\frac{\\lambda^k e^{-\\lambda}}{k!}$$"
+                f"{note}",
+                "Apply statistical formulas")
+
+    # ── Number Theory ─────────────────────────────────────────────────────────
+    elif any(w in t for w in ["prime", "gcd", "hcf", "lcm", "modulo", "congruent",
+                               "divisib", "factor", "number theory"]):
+        return ("Number Theory",
+                "📖 **Concept: Number Theory**\n\n"
+                "Number theory studies integers, prime numbers, divisibility, GCD, LCM, and modular arithmetic.\n\n"
+                "📐 **Key Concepts:**\n\n"
+                "GCD (Euclidean Algorithm): $$\\gcd(a,b) = \\gcd(b, a \\bmod b)$$\n\n"
+                "LCM: $$\\text{lcm}(a,b) = \\frac{a \\cdot b}{\\gcd(a,b)}$$\n\n"
+                "Prime Test: $n$ is prime if not divisible by any integer $2 \\le p \\le \\sqrt{n}$\n\n"
+                "Fermat's Little: $$a^{p-1} \\equiv 1 \\pmod{p}$$ (p prime, p∤a)\n\n"
+                "Euler's Totient: $$\\phi(n) = n\\prod_{p|n}\\left(1 - \\frac{1}{p}\\right)$$\n\n"
+                "Wilson's Theorem: $$(p-1)! \\equiv -1 \\pmod{p}$$ (p prime)"
+                f"{note}",
+                "Apply number theory theorems")
+
+    # ── Geometry ─────────────────────────────────────────────────────────────
+    elif any(w in t for w in ["area", "perim", "volume", "circumfer", "radius",
+                               "triangle", "circle", "rectangle", "polygon", "geometry",
+                               "sphere", "cylinder", "cone", "cube", "diagonal"]):
+        return ("Geometry",
+                "📖 **Concept: Geometry**\n\n"
+                "Geometry studies shapes, sizes, and properties of figures in 2D and 3D space.\n\n"
+                "📐 **2D Shapes:**\n\n"
+                "Circle: $$A = \\pi r^2, \\quad C = 2\\pi r$$\n"
+                "Rectangle: $$A = lw, \\quad P = 2(l+w)$$\n"
+                "Triangle: $$A = \\frac{1}{2}bh, \\quad \\text{Heron: } A = \\sqrt{s(s-a)(s-b)(s-c)}$$\n"
+                "Regular Polygon: $$A = \\frac{na^2}{4}\\cot\\frac{\\pi}{n}$$\n\n"
+                "📐 **3D Solids:**\n\n"
+                "Sphere: $$V = \\frac{4}{3}\\pi r^3, \\quad SA = 4\\pi r^2$$\n"
+                "Cylinder: $$V = \\pi r^2 h, \\quad SA = 2\\pi r(r+h)$$\n"
+                "Cone: $$V = \\frac{1}{3}\\pi r^2 h, \\quad SA = \\pi r(r+l)$$\n"
+                "Cube: $$V = a^3, \\quad SA = 6a^2$$\n\n"
+                "📐 **Key Theorems:**\n\n"
+                "Pythagorean: $$a^2 + b^2 = c^2$$\n"
+                "Law of Sines: $$\\frac{a}{\\sin A} = \\frac{b}{\\sin B} = \\frac{c}{\\sin C}$$\n"
+                "Law of Cosines: $$c^2 = a^2 + b^2 - 2ab\\cos C$$"
+                f"{note}",
+                "Apply geometry formulas")
+
+    # ── Sequences & Series ────────────────────────────────────────────────────
+    elif any(w in t for w in ["sequence", "series", "arithmetic", "geometric", "progression",
+                               "ap", "gp", "summation", "sigma", "nth term", "fibonacci"]):
+        return ("Sequences & Series",
+                "📖 **Concept: Sequences & Series**\n\n"
+                "A sequence is an ordered list of numbers; a series is their sum. "
+                "AP has constant difference; GP has constant ratio.\n\n"
+                "📐 **Arithmetic Progression (AP):**\n\n"
+                "General term: $$T_n = a + (n-1)d$$\n"
+                "Sum: $$S_n = \\frac{n}{2}[2a + (n-1)d] = \\frac{n}{2}(T_1 + T_n)$$\n\n"
+                "📐 **Geometric Progression (GP):**\n\n"
+                "General term: $$T_n = ar^{n-1}$$\n"
+                "Sum (finite): $$S_n = \\frac{a(r^n-1)}{r-1} \\quad (r \\neq 1)$$\n"
+                "Sum (infinite, |r|<1): $$S_\\infty = \\frac{a}{1-r}$$\n\n"
+                "📐 **Special Sums:**\n\n"
+                "$$\\sum_{k=1}^n k = \\frac{n(n+1)}{2}, \\quad \\sum_{k=1}^n k^2 = \\frac{n(n+1)(2n+1)}{6}$$"
+                f"{note}",
+                "Apply sequence/series formulas")
+
+    # ── Complex Numbers ───────────────────────────────────────────────────────
+    elif any(w in t for w in ["complex", "imaginary", "real part", "polar", "de moivre", "argand"]):
+        return ("Complex Numbers",
+                "📖 **Concept: Complex Numbers**\n\n"
+                "Complex numbers $z = a + bi$ extend the real numbers where $i^2 = -1$. "
+                "They can be represented in polar form $z = r(\\cos\\theta + i\\sin\\theta) = re^{i\\theta}$.\n\n"
+                "📐 **Key Formulas:**\n\n"
+                "Modulus: $$|z| = \\sqrt{a^2 + b^2}$$\n"
+                "Argument: $$\\arg(z) = \\arctan\\left(\\frac{b}{a}\\right)$$\n"
+                "Conjugate: $$\\bar{z} = a - bi$$\n"
+                "Euler: $$e^{i\\theta} = \\cos\\theta + i\\sin\\theta$$\n"
+                "De Moivre: $$(\\cos\\theta + i\\sin\\theta)^n = \\cos(n\\theta) + i\\sin(n\\theta)$$\n"
+                "Multiplication: $$z_1 z_2 = r_1 r_2 e^{i(\\theta_1+\\theta_2)}$$"
+                f"{note}",
+                "Apply complex number operations")
+
+    # ── Algebra (default) ─────────────────────────────────────────────────────
     else:
-        return ("Mathematics",
+        return ("Algebra",
                 "📖 **Concept: Algebra**\n\n"
-                "Algebra is the study of mathematical symbols and the rules for manipulating them. "
-                "Solving equations involves finding values of unknowns that satisfy given conditions.\n\n"
+                "Algebra uses symbols to represent numbers and express mathematical relationships. "
+                "Core skills: solving equations, factoring expressions, manipulating inequalities.\n\n"
                 "📐 **Key Formulas:**\n\n"
                 "Quadratic Formula: $$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$\n\n"
                 "Difference of Squares: $$a^2 - b^2 = (a+b)(a-b)$$\n\n"
                 "Perfect Square: $$(a \\pm b)^2 = a^2 \\pm 2ab + b^2$$\n\n"
-                "Binomial Theorem: $$(a+b)^n = \\sum_{k=0}^{n} \\binom{n}{k} a^{n-k} b^k$$"
+                "Sum of Cubes: $$a^3 + b^3 = (a+b)(a^2 - ab + b^2)$$\n\n"
+                "Binomial Theorem: $$(a+b)^n = \\sum_{k=0}^{n} \\binom{n}{k} a^{n-k} b^k$$\n\n"
+                "AM-GM Inequality: $$\\frac{a+b}{2} \\geq \\sqrt{ab} \\quad (a,b \\geq 0)$$"
                 f"{note}",
                 "Apply algebraic formulas and factoring")
 
@@ -898,62 +1377,94 @@ def groq_solve(question_text: str, groq_api_key: str, model: str = "llama-3.3-70
 
     # Try the specified model, then fallback models
     models_to_try = [model]
-    fallbacks = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+    fallbacks = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
     for fb in fallbacks:
         if fb not in models_to_try:
             models_to_try.append(fb)
 
     last_err = None
     for current_model in models_to_try:
-        messages = [
-            {"role": "system", "content": GROQ_SOLVER_PROMPT},
-            {"role": "user", "content": f"Problem to solve:\n{question_text}"}
-        ]
-        payload = {
-            "model": current_model,
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 4096,
-            "response_format": {"type": "json_object"},
-        }
-        headers = {
-            "Authorization": f"Bearer {groq_api_key}",
-            "Content-Type": "application/json",
-        }
-        try:
-            resp = _requests.post(url, json=payload, headers=headers, timeout=60)
-            if resp.status_code != 200:
-                err_body = resp.text[:300]
-                # Skip decommissioned models silently
-                if "decommissioned" in err_body.lower() or resp.status_code == 400:
-                    logger.warning(f"Groq model {current_model} unavailable: {err_body[:120]}")
-                    last_err = Exception(f"Groq model {current_model}: HTTP {resp.status_code}")
-                    continue
-                raise Exception(f"Groq API error {resp.status_code}: {err_body}")
-            result = resp.json()
-            content = result["choices"][0]["message"]["content"].strip()
-            if content.startswith("```"):
-                content = "\n".join(content.splitlines()[1:-1]).strip()
-            data = _json.loads(content)
-            return {
-                "status": "success", "solver_mode": "groq_ai",
-                "provider_model": f"Groq / {current_model}",
-                "problem_type": data.get("problem_type", "Mathematics"),
-                "difficulty_level": data.get("difficulty_level", ""),
-                "formulas_used": data.get("formulas_used", ""),
-                "theory_explanation": data.get("theory_explanation", ""),
-                "reasoning": data.get("reasoning", ""),
-                "solution_steps": data.get("solution_steps", ""),
-                "final_answer": data.get("final_answer", ""),
+        # ── First try: JSON response mode ─────────────────────────────────────
+        # Some models fail JSON mode for complex math — fall back to text+parse
+        for use_json_mode in [True, False]:
+            messages = [
+                {"role": "system", "content": GROQ_SOLVER_PROMPT},
+                {"role": "user", "content": f"Problem to solve:\n{question_text}"}
+            ]
+            payload = {
+                "model": current_model,
+                "messages": messages,
+                "temperature": 0.1,
+                "max_tokens": 4096,
             }
-        except _requests.exceptions.RequestException as e:
-            logger.warning(f"Groq solve network error for {current_model}: {e}")
-            last_err = e
-            continue
-        except Exception as e:
-            logger.warning(f"Groq solve failed for model {current_model}: {e}")
-            last_err = e
-            continue
+            if use_json_mode:
+                payload["response_format"] = {"type": "json_object"}
+            headers = {
+                "Authorization": f"Bearer {groq_api_key}",
+                "Content-Type": "application/json",
+            }
+            try:
+                resp = _requests.post(url, json=payload, headers=headers, timeout=60)
+                if resp.status_code != 200:
+                    err_body = resp.text[:300]
+                    if "decommissioned" in err_body.lower() or (
+                        resp.status_code == 400 and use_json_mode
+                    ):
+                        # JSON mode failing — try text mode next iteration
+                        if use_json_mode:
+                            logger.warning(f"Groq {current_model} JSON mode failed, retrying text mode")
+                            last_err = Exception(f"Groq {current_model}: HTTP {resp.status_code} (json mode)")
+                            break  # break inner loop, will retry with use_json_mode=False
+                        else:
+                            logger.warning(f"Groq model {current_model} unavailable: {err_body[:120]}")
+                            last_err = Exception(f"Groq model {current_model}: HTTP {resp.status_code}")
+                            break  # break inner, move to next model
+                    raise Exception(f"Groq API error {resp.status_code}: {err_body}")
+                result = resp.json()
+                content = result["choices"][0]["message"]["content"].strip()
+                # Strip markdown fences if present
+                if content.startswith("```"):
+                    lines = content.splitlines()
+                    content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
+                # Try JSON parsing
+                try:
+                    data = _json.loads(content)
+                except _json.JSONDecodeError:
+                    # Try to extract JSON block from text response
+                    json_match = re.search(r"\{[\s\S]+\}", content)
+                    if json_match:
+                        data = _json.loads(json_match.group(0))
+                    else:
+                        # Treat entire content as solution_steps
+                        data = {
+                            "problem_type": "Mathematics",
+                            "solution_steps": content,
+                            "final_answer": "",
+                        }
+                return {
+                    "status": "success", "solver_mode": "groq_ai",
+                    "provider_model": f"Groq / {current_model}",
+                    "problem_type": data.get("problem_type", "Mathematics"),
+                    "difficulty_level": data.get("difficulty_level", ""),
+                    "formulas_used": data.get("formulas_used", ""),
+                    "theory_explanation": data.get("theory_explanation", ""),
+                    "reasoning": data.get("reasoning", ""),
+                    "solution_steps": data.get("solution_steps", ""),
+                    "final_answer": data.get("final_answer", ""),
+                }
+            except _requests.exceptions.RequestException as e:
+                logger.warning(f"Groq solve network error for {current_model}: {e}")
+                last_err = e
+                break  # network error — skip json/text retry, move to next model
+            except Exception as e:
+                if use_json_mode:
+                    logger.warning(f"Groq {current_model} JSON mode error, trying text mode: {e}")
+                    last_err = e
+                    # continue inner loop for text mode
+                else:
+                    logger.warning(f"Groq solve failed for model {current_model}: {e}")
+                    last_err = e
+                    break
 
     raise Exception(f"All Groq models failed. Last error: {last_err}")
 

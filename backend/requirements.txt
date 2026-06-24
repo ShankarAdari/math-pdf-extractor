@@ -9,3 +9,6 @@ pdfplumber>=0.11.0
 pytesseract>=0.3.13
 easyocr>=1.7.0
 requests>=2.31.0
+sympy>=1.12
+numpy>=1.26.0
+scipy>=1.13.0
